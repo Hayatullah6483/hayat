@@ -1,0 +1,6 @@
+{
+  "name": "Hayat AI",
+  "description": "Your Personalized AI Assistant for Every Field. Adapts its responses, terminology, and languages dynamically to your profession and interests.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
