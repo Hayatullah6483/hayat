@@ -181,6 +181,10 @@ export default function MainChat({ user, onLogout, onUpdatePreferences }: MainCh
       const res = await fetch("/api/conversations", {
         headers: { "Authorization": `Bearer ${user.id}` }
       });
+      if (res.status === 401) {
+        onLogout();
+        return;
+      }
       if (res.ok) {
         const data = await res.json();
         setConversations(data.conversations || []);
@@ -214,6 +218,11 @@ export default function MainChat({ user, onLogout, onUpdatePreferences }: MainCh
         })
       });
 
+      if (res.status === 401) {
+        onLogout();
+        return;
+      }
+
       if (res.ok) {
         const data = await res.json();
         setConversations((prev) => [data.conversation, ...prev]);
@@ -237,6 +246,10 @@ export default function MainChat({ user, onLogout, onUpdatePreferences }: MainCh
         },
         body: JSON.stringify({ pinned: !currentPinStatus })
       });
+      if (res.status === 401) {
+        onLogout();
+        return;
+      }
       if (res.ok) {
         fetchConversations();
       }
@@ -257,6 +270,10 @@ export default function MainChat({ user, onLogout, onUpdatePreferences }: MainCh
         },
         body: JSON.stringify({ title: renameValue })
       });
+      if (res.status === 401) {
+        onLogout();
+        return;
+      }
       if (res.ok) {
         setEditingConvId(null);
         fetchConversations();
@@ -275,6 +292,10 @@ export default function MainChat({ user, onLogout, onUpdatePreferences }: MainCh
         method: "DELETE",
         headers: { "Authorization": `Bearer ${user.id}` }
       });
+      if (res.status === 401) {
+        onLogout();
+        return;
+      }
       if (res.ok) {
         setConversations((prev) => prev.filter((c) => c.id !== id));
         if (activeConvId === id) {
@@ -363,7 +384,8 @@ export default function MainChat({ user, onLogout, onUpdatePreferences }: MainCh
   // Send Main Message call
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputMessage.trim() && attachments.length === 0) return;
+    const messageContent = inputMessage.trim();
+    if (!messageContent && attachments.length === 0) return;
     if (aiStreaming) return;
 
     let targetConvId = activeConvId;
@@ -378,11 +400,15 @@ export default function MainChat({ user, onLogout, onUpdatePreferences }: MainCh
             "Authorization": `Bearer ${user.id}`
           },
           body: JSON.stringify({
-            title: inputMessage.trim().substring(0, 24) || "New Discussion",
+            title: messageContent.substring(0, 24) || "New Discussion",
             profession: prefProf,
             language: prefLang
           })
         });
+        if (res.status === 401) {
+          onLogout();
+          return;
+        }
         if (res.ok) {
           const data = await res.json();
           targetConvId = data.conversation.id;
@@ -390,11 +416,12 @@ export default function MainChat({ user, onLogout, onUpdatePreferences }: MainCh
           setConversations((prev) => [data.conversation, ...prev]);
           setActiveConvId(data.conversation.id);
         } else {
-          alert("Unable to establish chat room connection.");
+          alert("Unable to establish chat room connection. Please make sure you are signed in.");
           return;
         }
       } catch (err) {
         console.error(err);
+        alert("Network issue establishing conversation. Check your connection.");
         return;
       }
     }
@@ -406,6 +433,28 @@ export default function MainChat({ user, onLogout, onUpdatePreferences }: MainCh
     setInputMessage("");
     setAttachments([]);
     setAiStreaming(true);
+
+    // Create optimistic user message structure and append immediately to trigger swift responsive rendering
+    const newUserMessage = {
+      id: "msg_temp_" + Math.random().toString(36).substring(2, 11),
+      role: "user" as const,
+      content: payloadText,
+      timestamp: new Date().toISOString(),
+      files: payloadFiles
+    };
+
+    setConversations((prev) =>
+      prev.map((c) => {
+        if (c.id === targetConvId) {
+          return {
+            ...c,
+            messages: [...c.messages, newUserMessage],
+            updatedAt: new Date().toISOString()
+          };
+        }
+        return c;
+      })
+    );
 
     try {
       const res = await fetch(`/api/conversations/${targetConvId}/messages`, {
@@ -419,6 +468,11 @@ export default function MainChat({ user, onLogout, onUpdatePreferences }: MainCh
           files: payloadFiles
         })
       });
+
+      if (res.status === 401) {
+        onLogout();
+        return;
+      }
 
       if (res.ok) {
         const data = await res.json();
@@ -435,10 +489,40 @@ export default function MainChat({ user, onLogout, onUpdatePreferences }: MainCh
         
         playBeep("success");
       } else {
-        alert("Server returned error when generating response.");
+        const errorData = await res.json().catch(() => ({}));
+        alert(`Server Error: ${errorData.error || "Server returned error when generating response."}`);
+        // Revert inputs
+        setInputMessage(payloadText);
+        setAttachments(payloadFiles);
+        setConversations((prev) =>
+          prev.map((c) => {
+            if (c.id === targetConvId) {
+              return {
+                ...c,
+                messages: c.messages.filter((m) => m.id !== newUserMessage.id)
+              };
+            }
+            return c;
+          })
+        );
       }
     } catch (err) {
       console.error("Communication issue post sending message:", err);
+      alert("Network transmission issue. The server did not respond. Retaining message inputs.");
+      // Revert inputs
+      setInputMessage(payloadText);
+      setAttachments(payloadFiles);
+      setConversations((prev) =>
+        prev.map((c) => {
+          if (c.id === targetConvId) {
+            return {
+              ...c,
+              messages: c.messages.filter((m) => m.id !== newUserMessage.id)
+            };
+          }
+          return c;
+        })
+      );
     } finally {
       setAiStreaming(false);
     }
@@ -464,6 +548,11 @@ export default function MainChat({ user, onLogout, onUpdatePreferences }: MainCh
         })
       });
 
+      if (res.status === 401) {
+        onLogout();
+        return;
+      }
+
       if (res.ok) {
         onUpdatePreferences({
           languages: [prefLang],
@@ -478,7 +567,7 @@ export default function MainChat({ user, onLogout, onUpdatePreferences }: MainCh
         
         // If there is an active session, update its visual tags dynamically as context
         if (activeConvId) {
-          await fetch(`/api/conversations/${activeConvId}`, {
+          const putRes = await fetch(`/api/conversations/${activeConvId}`, {
             method: "PUT",
             headers: {
               "Content-Type": "application/json",
@@ -489,6 +578,10 @@ export default function MainChat({ user, onLogout, onUpdatePreferences }: MainCh
               language: prefLang
             })
           });
+          if (putRes.status === 401) {
+            onLogout();
+            return;
+          }
           fetchConversations();
         }
 
